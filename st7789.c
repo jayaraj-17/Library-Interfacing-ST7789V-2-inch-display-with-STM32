@@ -1,7 +1,8 @@
-#include "fonts.h"
+//#include "fonts.h"
 #include <stdio.h>
 #include <math.h>
 #include <st7789.h>
+#include "lvgl.h"
 
 // Display dimensions
 static int16_t _width = ST7789_WIDTH;
@@ -19,6 +20,8 @@ static TextCursor_t cursor = {0, 0, ST77XX_WHITE, ST77XX_BLACK, 1, true};
 #define TFT_CS_LOW()    HAL_GPIO_WritePin(TFT_CS_PORT, TFT_CS_PIN, GPIO_PIN_RESET)
 #define TFT_CS_HIGH()   HAL_GPIO_WritePin(TFT_CS_PORT, TFT_CS_PIN, GPIO_PIN_SET)
 
+
+#define ST7789_Y_OFFSET 20   // or 40 depending on your panel
 // Low-level SPI functions
 static void TFT_WriteCommand(uint8_t cmd) {
     TFT_DC_LOW();
@@ -41,7 +44,12 @@ static void TFT_WriteDataMultiple(uint8_t* data, uint32_t len) {
     TFT_CS_HIGH();
 }
 
+
 static void TFT_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+    // Apply vertical offset so (0,0) logical is mapped into the visible area
+    y0 += ST7789_Y_OFFSET;
+    y1 += ST7789_Y_OFFSET;
+
     TFT_WriteCommand(ST7789_CASET);
     TFT_WriteData(x0 >> 8);
     TFT_WriteData(x0 & 0xFF);
@@ -57,6 +65,7 @@ static void TFT_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
     TFT_WriteCommand(ST7789_RAMWR);
 }
 
+
 // Initialize display - Adafruit style
 void TFT_Init(uint16_t width, uint16_t height) {
     _width = width;
@@ -70,17 +79,21 @@ void TFT_Init(uint16_t width, uint16_t height) {
     TFT_RST_HIGH();
     HAL_Delay(120);
 
-    TFT_WriteCommand(ST7789_SWRESET);
-    HAL_Delay(150);
+    //Serial_Println("TFT_SWRESET");
+      TFT_WriteCommand(ST7789_SWRESET);
+      HAL_Delay(150);
 
-    TFT_WriteCommand(ST7789_SLPOUT);
-    HAL_Delay(120);
+     // Serial_Println("TFT_SLPOUT");
+      TFT_WriteCommand(ST7789_SLPOUT);
+      HAL_Delay(120);
 
-    TFT_WriteCommand(ST7789_COLMOD);
-    TFT_WriteData(0x55); // 16-bit color
+     // Serial_Println("TFT_COLMOD 16-bit");
+      TFT_WriteCommand(ST7789_COLMOD);
+      TFT_WriteData(0x55);
 
-    TFT_WriteCommand(ST7789_MADCTL);
-    TFT_WriteData(0x00);
+    //  Serial_Println("TFT_MADCTL");
+      TFT_WriteCommand(ST7789_MADCTL);
+      TFT_WriteData(0x00);
 
     TFT_WriteCommand(ST7789_INVON);
     HAL_Delay(10);
@@ -137,6 +150,7 @@ void TFT_DrawPixel(int16_t x, int16_t y, uint16_t color) {
 }
 
 void TFT_FillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+    // Bounds checking
     if (x >= _width || y >= _height || w <= 0 || h <= 0) return;
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }
@@ -145,20 +159,31 @@ void TFT_FillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
 
     TFT_SetWindow(x, y, x + w - 1, y + h - 1);
 
-    uint8_t data[2];
-    data[0] = color >> 8;
-    data[1] = color & 0xFF;
+    uint32_t totalPixels = (uint32_t)w * (uint32_t)h;
+
+    // OPTIMIZED: Use buffer to reduce SPI calls
+    uint16_t pixelBuffer[64];  // 128 bytes buffer
+    for (int i = 0; i < 64; i++) {
+        pixelBuffer[i] = color;
+    }
 
     TFT_DC_HIGH();
     TFT_CS_LOW();
 
-    uint32_t totalPixels = (uint32_t)w * (uint32_t)h;
-    for (uint32_t i = 0; i < totalPixels; i++) {
-        HAL_SPI_Transmit(&TFT_SPI_PORT, data, 2, HAL_MAX_DELAY);
+    // Send in chunks
+    while (totalPixels >= 64) {
+        HAL_SPI_Transmit(&TFT_SPI_PORT, (uint8_t *)pixelBuffer, 128, HAL_MAX_DELAY);
+        totalPixels -= 64;
+    }
+
+    // Send remaining pixels
+    if (totalPixels > 0) {
+        HAL_SPI_Transmit(&TFT_SPI_PORT, (uint8_t *)pixelBuffer, totalPixels * 2, HAL_MAX_DELAY);
     }
 
     TFT_CS_HIGH();
 }
+
 
 void TFT_DrawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color) {
     int16_t steep = abs(y1 - y0) > abs(x1 - x0);
@@ -413,29 +438,6 @@ void TFT_SetTextWrap(bool wrap) {
     cursor.wrap = wrap;
 }
 
-static void TFT_DrawChar(int16_t x, int16_t y, char c, uint16_t color, uint16_t bg, uint8_t size) {
-    if (c < 32 || c > 126) return;
-
-    for (uint8_t i = 0; i < 5; i++) {
-        uint8_t line = font[c - 32][i];
-        for (uint8_t j = 0; j < 8; j++) {
-            if (line & 0x01) {
-                if (size == 1) {
-                    TFT_DrawPixel(x + i, y + j, color);
-                } else {
-                    TFT_FillRect(x + i * size, y + j * size, size, size, color);
-                }
-            } else if (bg != color) {
-                if (size == 1) {
-                    TFT_DrawPixel(x + i, y + j, bg);
-                } else {
-                    TFT_FillRect(x + i * size, y + j * size, size, size, bg);
-                }
-            }
-            line >>= 1;
-        }
-    }
-}
 
 void TFT_Print(const char* str) {
     while (*str) {
@@ -487,3 +489,81 @@ int16_t TFT_Width(void) {
 int16_t TFT_Height(void) {
     return _height;
 }
+
+//////////////////////////////////
+
+void TFT_WritePixels(uint16_t *data, uint32_t len) {
+    TFT_DC_HIGH();
+    TFT_CS_LOW();
+    HAL_SPI_Transmit(&TFT_SPI_PORT, (uint8_t *)data, len * 2, HAL_MAX_DELAY);
+    TFT_CS_HIGH();
+}
+
+
+// LVGL display flush callback
+void st7789_lv_flush(lv_disp_drv_t *disp_drv,
+                     const lv_area_t *area,
+                     lv_color_t *color_p)
+{
+    int32_t x1 = area->x1;
+    int32_t y1 = area->y1;
+    int32_t x2 = area->x2;
+    int32_t y2 = area->y2;
+
+    // Clip to screen bounds (safety check)
+    if (x2 < 0 || y2 < 0 || x1 >= _width || y1 >= _height) {
+        lv_disp_flush_ready(disp_drv);
+        return;
+    }
+    if (x1 < 0) x1 = 0;
+    if (y1 < 0) y1 = 0;
+    if (x2 >= _width) x2 = _width - 1;
+    if (y2 >= _height) y2 = _height - 1;
+
+    // drawing window
+    TFT_SetWindow(x1, y1, x2, y2);
+
+    // Calculating pixel count
+    uint32_t w = x2 - x1 + 1;
+    uint32_t h = y2 - y1 + 1;
+    uint32_t total = w * h;
+
+    // Sending pixel data (LVGL uses RGB565, same as ST7789)
+    TFT_DC_HIGH();
+    TFT_CS_LOW();
+    HAL_SPI_Transmit(&TFT_SPI_PORT,
+                     (uint8_t *)color_p,
+                     total * 2,  // 2 bytes per pixel
+                     HAL_MAX_DELAY);
+    TFT_CS_HIGH();
+
+    // Tell LVGL we're done
+    lv_disp_flush_ready(disp_drv);
+}
+
+/* ================= LVGL BUFFER ================= */
+
+static lv_disp_draw_buf_t draw_buf;
+
+/* 20 lines buffer (safe for STM32WB55 RAM) */
+static lv_color_t buf[240 * 20];
+
+
+void LVGL_Display_Init(void)
+{
+    lv_init();
+
+    /* draw buffer */
+    lv_disp_draw_buf_init(&draw_buf, buf, NULL, 240 * 20);
+
+    static lv_disp_drv_t disp_drv;
+    lv_disp_drv_init(&disp_drv);
+
+    disp_drv.hor_res = 240;
+    disp_drv.ver_res = 280;
+    disp_drv.flush_cb = st7789_lv_flush;
+    disp_drv.draw_buf = &draw_buf;
+
+    lv_disp_drv_register(&disp_drv);
+}
+
