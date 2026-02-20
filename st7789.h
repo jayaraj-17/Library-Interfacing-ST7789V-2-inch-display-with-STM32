@@ -6,24 +6,26 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
+#include "lvgl.h"  
+
 
 // Display dimensions
 #define ST7789_WIDTH  240
-#define ST7789_HEIGHT 320
+#define ST7789_HEIGHT 280
 
-// Pin definitions - MODIFY ACCORDING TO YOUR CONNECTIONS
-#define TFT_RST_PIN     GPIO_PIN_5
+// Pin definitions
+#define TFT_RST_PIN     GPIO_PIN_2
 #define TFT_RST_PORT    GPIOB
-#define TFT_DC_PIN      GPIO_PIN_10
-#define TFT_DC_PORT     GPIOA
-#define TFT_CS_PIN      GPIO_PIN_9
+#define TFT_DC_PIN      GPIO_PIN_1
+#define TFT_DC_PORT     GPIOB
+#define TFT_CS_PIN      GPIO_PIN_0
 #define TFT_CS_PORT     GPIOB
 
 // SPI Handle
 extern SPI_HandleTypeDef hspi1;
 #define TFT_SPI_PORT hspi1
 
-// Color definitions (RGB565 format) - Adafruit compatible
+// Color definitions (RGB565 format)
 #define ST77XX_BLACK       0x0000
 #define ST77XX_WHITE       0xFFFF
 #define ST77XX_RED         0xF800
@@ -72,6 +74,14 @@ typedef struct {
 // Function prototypes - Adafruit GFX style
 void TFT_Init(uint16_t width, uint16_t height);
 void TFT_SetRotation(uint8_t rotation);
+
+////////////// Lvgl intigration
+void st7789_lv_flush(lv_disp_drv_t *disp_drv,
+                     const lv_area_t *area,
+                     lv_color_t *color_p);
+
+void TFT_WritePixels(uint16_t *data, uint32_t len);
+
 
 // Drawing functions
 void TFT_FillScreen(uint16_t color);
